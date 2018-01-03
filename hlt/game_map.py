@@ -1,3 +1,4 @@
+from hlt.entity import Ship
 from . import collision, entity
 
 
@@ -10,6 +11,8 @@ class Map:
     :ivar height: Map height
     """
 
+    MAX_SHIPS = 20
+
     def __init__(self, my_id, width, height):
         """
         :param my_id: User's id (tag)
@@ -21,6 +24,11 @@ class Map:
         self.height = height
         self._players = {}
         self._planets = {}
+
+        self.foe_ships = None
+        self._foe_ships_exit_table = None
+        self.planets_assigned = None
+        self.ship_assignment = {}
 
     def get_me(self):
         """
@@ -96,6 +104,37 @@ class Map:
         assert(len(tokens) == 0)  # There should be no remaining tokens at this point
         self._link()
 
+        self.foe_ships = None
+        self.planets_assigned = set(p.id for p in self.all_planets())
+
+        self.ships = 0
+        self.fighters = 0
+        self.bombers = 0
+        self.settlers = 0
+        self.defenders = 0
+
+        self.undocked_ship = []
+        for s in self.get_me().all_ships():
+            if s.docking_status == Ship.DockingStatus.UNDOCKED:
+                self.ships += 1
+                self.undocked_ship.append(s)
+
+        for k, v in self.ship_assignment.items():
+            if v['action'].__name__ == 'fight':
+                self.fighters += 1
+                continue
+            if v['action'].__name__ == 'bomb':
+                self.bombers += 1
+                continue
+            if v['action'].__name__ == 'settle':
+                self.settlers += 1
+                continue
+            if v['action'].__name__ == 'defend':
+                self.defenders += 1
+                continue
+
+        self.kamikazes = self.ships - self.MAX_SHIPS
+
     def _all_ships(self):
         """
         Helper function to extract all ships from all players
@@ -143,6 +182,64 @@ class Map:
             if collision.intersect_segment_circle(ship, target, foreign_entity, fudge=ship.radius + 0.1):
                 obstacles.append(foreign_entity)
         return obstacles
+
+    def get_foe_ships(self):
+
+        if self.foe_ships is not None:
+            return  self.foe_ships
+
+        self.foe_ships = []
+        self._foe_ships_exit_table = {}
+        for player in self.all_players():
+            self._foe_ships_exit_table[player.id] = {}
+            if player.id == self.my_id:
+                continue
+            self.foe_ships.extend(player.all_ships())
+            for s in player.all_ships():
+                self._foe_ships_exit_table[player.id][s.id] = s
+        return self.foe_ships
+
+    def ship_exist(self, ship):
+
+        if ship is None:
+            return  False
+
+        if self.foe_ships is None:
+            self.get_foe_ships()
+
+        return ship.id in self._foe_ships_exit_table[ship.owner.id]
+
+    def assign_ship(self, ship, map):
+
+        import logging
+        logging.info("A%s F%s B%s D%s S%s" % (self.ships, self.fighters, self.bombers, self.defenders, self.settlers))
+
+        if ship.id in self.ship_assignment and self.ship_assignment[ship.id]['action'].__name__ != 'nothing':
+            return
+
+        if self.kamikazes > 0:
+            self.ship_assignment[ship.id] = {'action': ship.kamikaze}
+            self.kamikazes -= 1
+            return
+
+        if ship.id % 3 == 0:
+            self.ship_assignment[ship.id] = {'action': ship.bomb}
+            self.bombers += 1
+            return
+
+        # if ship.id % 5 == 0:
+        #     self.defenders += 1
+        #     self.ship_assignment[ship.id] = {'action': ship.defend, 'position': ship}
+
+        for p in map.all_planets():
+            if p.is_owned() is False:
+                self.settlers += 1
+                self.ship_assignment[ship.id] = {'action': ship.settle}
+                return
+
+        self.fighters += 1
+        self.ship_assignment[ship.id] = {'action': ship.bomb}
+        return
 
 
 class Player:

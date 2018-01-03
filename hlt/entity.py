@@ -225,6 +225,7 @@ class Ship(Entity):
 
     def __init__(self, player_id, ship_id, x, y, hp, vel_x, vel_y,
                  docking_status, planet, progress, cooldown):
+
         self.id = ship_id
         self.x = x
         self.y = y
@@ -328,6 +329,188 @@ class Ship(Entity):
         """
         self.owner = players.get(self.owner)  # All ships should have an owner. If not, this will just reset to None
         self.planet = planets.get(self.planet)  # If not will just reset to none
+
+
+
+    DEFENSE_RADIUS = 50
+
+    @staticmethod
+    def fight(self, map, foe=None):
+
+        if foe is not None:
+            map.ship_assignment[self.id]['foe'] = (foe.id, foe.owner.id)
+
+        if self.docking_status in [Ship.DockingStatus.DOCKED, Ship.DockingStatus.DOCKING]:
+            return self.undock()
+
+        if foe is None and 'foe' in map.ship_assignment[self.id]:
+            try:
+                foe_owner = map.get_player(map.ship_assignment[self.id][1])
+                foe = foe_owner.get_ship(map.ship_assignment[self.id][0])
+                if foe is not None:
+                    map.ship_assignment[self.id]['foe'] = (foe.id, foe.owner.id)
+            except:
+                pass
+
+        if map.ship_exist(foe):
+            return self.navigate(self.closest_point_to(foe), map, speed=constants.MAX_SPEED)
+
+        foe_ships_by_distance = {}
+        for foe_ship in map.foe_ships():
+            foe_ships_by_distance.setdefault(self.calculate_distance_between(foe_ship), []).append(foe_ship)
+
+        for distance in sorted(foe_ships_by_distance):
+
+            near_foe_ships = foe_ships_by_distance[distance]
+            for foe_ship in near_foe_ships:
+                map.ship_assignment[self.id]['foe'] = (foe_ship.id, foe_ship.owner.id)
+                return self.navigate(self.closest_point_to(foe_ship), map, speed=constants.MAX_SPEED)
+
+        map.ship_assignment[self.id] = {'action': self.nothing}
+        return None
+
+    @staticmethod
+    def bomb(self, map, foe=None):
+
+        if foe is not None:
+            map.ship_assignment[self.id]['foe'] = (foe.id, foe.owner.id)
+
+        # if foe is None and 'foe' in map.ship_assignment[self.id]:
+        #     try:
+        #         foe_owner = map.get_player(map.ship_assignment[self.id][1])
+        #         foe = foe_owner.get_ship(map.ship_assignment[self.id][0])
+        #         if foe is not None:
+        #             map.ship_assignment[self.id]['foe'] = (foe.id, foe.owner.id)
+        #     except:
+        #         pass
+        #
+        # if map.ship_exist(foe):
+        #     return self.navigate(self.closest_point_to(foe), map, speed=constants.MAX_SPEED)
+
+        foe_ships_by_distance = {}
+        for foe_ship in map.get_foe_ships():
+            foe_ships_by_distance.setdefault(self.calculate_distance_between(foe_ship), []).append(foe_ship)
+
+        closest_foe = None
+        for distance in sorted(foe_ships_by_distance):
+            if closest_foe is None:
+                closest_foe = distance
+
+            near_foe_ships = foe_ships_by_distance[distance]
+            for foe_ship in near_foe_ships:
+                if foe_ship.docking_status != Ship.DockingStatus.UNDOCKED or distance < 10:
+                    map.ship_assignment[self.id]['foe'] = (foe_ship.id, foe_ship.owner.id)
+                    return self.navigate(self.closest_point_to(foe_ship), map, speed=constants.MAX_SPEED)
+        foe_ship = foe_ships_by_distance[closest_foe][0]
+        map.ship_assignment[self.id]['foe'] = (foe_ship.id, foe_ship.owner.id)
+
+        return self.navigate(self.closest_point_to(foe_ship), map, speed=constants.MAX_SPEED)
+
+    @staticmethod
+    def defend(self, map, position=None):
+
+
+        if position is None:
+            position = map.ship_assignment[self.id]['position']
+        else:
+            map.ship_assignment[self.id]['position'] = position
+
+        if self.docking_status in [Ship.DockingStatus.DOCKED, Ship.DockingStatus.DOCKING]:
+            return self.undock()
+
+        if self.calculate_distance_between(position) > self.DEFENSE_RADIUS:
+            return self.navigate(self.closest_point_to(position), map, speed=constants.MAX_SPEED)
+
+        foe_ships_by_distance = {}
+        for foe_ship in map.get_foe_ships():
+            foe_ships_by_distance.setdefault(self.calculate_distance_between(foe_ship), []).append(foe_ship)
+
+        for distance in sorted(foe_ships_by_distance):
+
+            if distance > self.DEFENSE_RADIUS:
+                break
+
+            return self.navigate(self.closest_point_to(foe_ships_by_distance[distance][0]), map,
+                                 speed=constants.MAX_SPEED)
+
+        return None
+
+    @staticmethod
+    def settle(self, map, planet=None):
+
+        logging.info('%s %s ' % (self.x, self.y))
+
+        planets_by_distance = {}
+
+        if planet is None and 'planet' in map.ship_assignment[self.id]:
+            planet = map.get_planet(map.ship_assignment[self.id]['planet'])
+            logging.info('P:%s' % planet.id)
+
+        if planet is not None and (planet.is_owned() is False or (planet.is_owned() is True \
+                                                                  and planet.owner.id == map.get_me().id \
+                                                                  and planet.is_full() is False)):
+            if self.can_dock(planet):
+                logging.info('P:docking')
+                return self.dock(planet)
+            else:
+                logging.info('P:navigate %s' % self.calculate_distance_between(planet))
+                return self.navigate(self.closest_point_to(planet), map, speed=constants.MAX_SPEED)
+
+        all_planets = {p.id: p for p in map.all_planets()}
+
+        for planet in list(all_planets.values()):
+            distance = self.calculate_distance_between(planet)
+            planets_by_distance.setdefault(distance, []).append(planet)
+
+        for distance in sorted(planets_by_distance):
+            near_planets = planets_by_distance[distance]
+
+            for planet in near_planets:
+
+                if (planet.is_owned() is False or (planet.is_owned() is True \
+                                                   and planet.owner.id == map.get_me().id \
+                                                   and planet.is_full() is False)) \
+                        and self.can_dock_by_distance(distance, planet):
+                    del map.ship_assignment[self.id]
+                    return self.dock(planet)
+
+                if planet.id in map.planets_assigned and distance > 4:
+                    map.planets_assigned.remove(planet.id)
+                    map.ship_assignment[self.id] = {'action': self.settle, 'planet': planet.id}
+                    return self.navigate(self.closest_point_to(planet), map,
+                                         speed=constants.MAX_SPEED)
+
+
+
+        del map.ship_assignment[self.id]
+        return None
+
+    @staticmethod
+    def nothing(self, map):
+        del map.ship_assignment[self.id]
+        return None
+
+    @staticmethod
+    def kamikaze(self, map):
+        if 'planet' in map.ship_assignment[self.id]:
+            return None
+
+        for planet in list(all_planets.values()):
+            distance = self.calculate_distance_between(planet)
+            planets_by_distance.setdefault(distance, []).append(planet)
+
+        for distance in sorted(planets_by_distance):
+            near_planets = planets_by_distance[distance]
+
+            for planet in near_planets:
+                if planet.is_owned() and planet.owner.id != map.get_me().id:
+                    map.ship_assignment[self.id]['planet'] = planet.id
+                    return self.navigate(self.closest_point_to(planet), map, speed=constants.MAX_SPEED)
+
+        return None
+
+    def can_dock_by_distance(self, distance, planet):
+        return distance < planet.radius + constants.DOCK_RADIUS + constants.SHIP_RADIUS
 
     @staticmethod
     def _parse_single(player_id, tokens):
