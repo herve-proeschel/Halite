@@ -1,5 +1,7 @@
+from .navigation import calculate_distance_between
 from hlt.entity import Ship
 from . import collision, entity
+from .collision import intersect_segment_circle
 
 
 class Map:
@@ -24,6 +26,7 @@ class Map:
         self.height = height
         self._players = {}
         self._planets = {}
+        self._ghosts = []
 
         self.foe_ships = None
         self._foe_ships_exit_table = None
@@ -67,6 +70,17 @@ class Map:
         """
         return list(self._planets.values())
 
+    def all_ships(self):
+        """
+        Helper function to extract all ships from all players
+        :return: List of ships
+        :rtype: List[Ship]
+        """
+        all_ships = []
+        for player in self.all_players():
+            all_ships.extend(player.all_ships())
+        return all_ships
+
     def nearby_entities_by_distance(self, entity):
         """
         :param entity: The source entity to find distances from
@@ -101,6 +115,8 @@ class Map:
         self._players, tokens = Player._parse(tokens)
         self._planets, tokens = entity.Planet._parse(tokens)
 
+        self._ghosts = []
+
         assert(len(tokens) == 0)  # There should be no remaining tokens at this point
         self._link()
 
@@ -134,6 +150,14 @@ class Map:
                 continue
 
         self.kamikazes = self.ships - self.MAX_SHIPS
+
+    def all_ghost(self):
+        """
+        Helper function to extract all ghosts
+        :return: List of ghost
+        :rtype: List[Circle]
+        """
+        return self._ghosts
 
     def _all_ships(self):
         """
@@ -174,14 +198,22 @@ class Map:
         :rtype: list[entity.Entity]
         """
         obstacles = []
-        entities = ([] if issubclass(entity.Planet, ignore) else self.all_planets()) \
-            + ([] if issubclass(entity.Ship, ignore) else self._all_ships())
-        for foreign_entity in entities:
-            if foreign_entity == ship or foreign_entity == target:
-                continue
-            if collision.intersect_segment_circle(ship, target, foreign_entity, fudge=ship.radius + 0.1):
-                obstacles.append(foreign_entity)
+        if not ignore_ships:
+            for enemy_ship in self.all_ships():
+                if enemy_ship == ship or enemy_ship == target:
+                    continue
+                if intersect_segment_circle(ship, target, enemy_ship, fudge=ship.pos.radius + 0.1):
+                    obstacles.append(enemy_ship)
+        if not ignore_planets:
+            for planet in self.all_planets():
+                if planet == ship or planet == target:
+                    continue
+                if intersect_segment_circle(ship, target, planet, fudge=ship.pos.radius + 0.1):
+                    obstacles.append(planet)
         return obstacles
+
+    def add_ghost(self, ghost):
+        self._ghosts.append(ghost)
 
     def get_foe_ships(self):
 
@@ -218,7 +250,7 @@ class Map:
             return
 
         if self.kamikazes > 0:
-            self.ship_assignment[ship.id] = {'action': ship.kamikaze}
+            self.ship_assignment[ship.id] = {'action': ship.fight}
             self.kamikazes -= 1
             return
 

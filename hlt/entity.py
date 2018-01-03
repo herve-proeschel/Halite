@@ -1,9 +1,13 @@
-import logging
 import abc
+import logging
 import math
 from enum import Enum
+
+from .navigation import Circle, navigate, calculate_distance_between, calculate_direction
 from . import constants
 
+
+INTERMEDIATE_RATIO = 0.5
 
 class Entity:
     """
@@ -21,9 +25,7 @@ class Entity:
     __metaclass__ = abc.ABCMeta
 
     def __init__(self, x, y, radius, health, player, entity_id):
-        self.x = x
-        self.y = y
-        self.radius = radius
+        self.pos = Circle(x, y, radius)
         self.health = health
         self.owner = player
         self.id = entity_id
@@ -36,7 +38,7 @@ class Entity:
         :return: distance
         :rtype: float
         """
-        return math.sqrt((target.x - self.x) ** 2 + (target.y - self.y) ** 2)
+        return math.sqrt((target.pos.x - self.pos.x) ** 2 + (target.pos.y - self.pos.y) ** 2)
 
     def calculate_angle_between(self, target):
         """
@@ -46,7 +48,7 @@ class Entity:
         :return: Angle between entities in degrees
         :rtype: float
         """
-        return math.degrees(math.atan2(target.y - self.y, target.x - self.x)) % 360
+        return math.degrees(math.atan2(target.pos.y - self.pos.y, target.pos.x - self.pos.x)) % 360
 
     def closest_point_to(self, target, min_distance=3):
         """
@@ -59,10 +61,9 @@ class Entity:
         :rtype: Position
         """
         angle = target.calculate_angle_between(self)
-        radius = target.radius + min_distance
-        x = target.x + radius * math.cos(math.radians(angle))
-        y = target.y + radius * math.sin(math.radians(angle))
-
+        radius = target.pos.radius + min_distance
+        x = target.pos.x + radius * math.cos(math.radians(angle))
+        y = target.pos.y + radius * math.sin(math.radians(angle))
         return Position(x, y)
 
     @abc.abstractmethod
@@ -70,8 +71,8 @@ class Entity:
         pass
 
     def __str__(self):
-        return "Entity {} (id: {}) at position: (x = {}, y = {}), with radius = {}"\
-            .format(self.__class__.__name__, self.id, self.x, self.y, self.radius)
+        return "Entity {} (id: {}) at position: (x = {}, y = {}), with radius = {}" \
+            .format(self.__class__.__name__, self.id, int(self.pos.x), int(self.pos.y), int(self.pos.radius))
 
     def __repr__(self):
         return self.__str__()
@@ -86,19 +87,17 @@ class Planet(Entity):
     :ivar y: The planet y-coordinate.
     :ivar radius: The planet radius.
     :ivar num_docking_spots: The max number of ships that can be docked.
-    :ivar current_production: How much production the planet has generated at the moment. Once it reaches the threshold, a ship will spawn and this will be reset.
+    :ivar current_production: How much production the planet has generated at the moment.
+                              Once it reaches the threshold, a ship will spawn and this will be reset.
     :ivar remaining_resources: The remaining production capacity of the planet.
     :ivar health: The planet's health.
     :ivar owner: The player ID of the owner, if any. If None, Entity is not owned.
 
     """
 
-    def __init__(self, planet_id, x, y, hp, radius, docking_spots, current,
-                 remaining, owned, owner, docked_ships):
+    def __init__(self, planet_id, x, y, hp, radius, docking_spots, current, remaining, owned, owner, docked_ships):
         self.id = planet_id
-        self.x = x
-        self.y = y
-        self.radius = radius
+        self.pos = Circle(x, y, radius)
         self.num_docking_spots = docking_spots
         self.current_production = current
         self.remaining_resources = remaining
@@ -134,6 +133,13 @@ class Planet(Entity):
         """
         return self.owner is not None
 
+    def nb_available_docking_spots(self):
+        """
+        Return the number of available spots to dock
+        :return:
+        """
+        return self.num_docking_spots - len(self._docked_ship_ids)
+
     def is_full(self):
         """
         Determines if the planet has been fully occupied (all possible ships are docked)
@@ -141,7 +147,28 @@ class Planet(Entity):
         :return: True if full, False otherwise.
         :rtype: bool
         """
-        return len(self._docked_ship_ids) >= self.num_docking_spots
+        return self.nb_available_docking_spots() <= 0
+
+    def is_free(self, player):
+        """
+        Check is the planet is free for this player
+        :param player:
+        :return:
+        """
+        # If the planet is empty, it's free
+        if not self.is_owned():
+            return True
+
+        # Check if the planet belong to some else
+        if self.owner != player:
+            return False
+
+        # Check if the planet is full
+        if self.is_full():
+            return False
+
+        # The planet is free!
+        return True
 
     def _link(self, players, planets):
         """
@@ -206,15 +233,14 @@ class Planet(Entity):
 class Ship(Entity):
     """
     A ship in the game.
-    
+
     :ivar id: The ship ID.
-    :ivar x: The ship x-coordinate.
-    :ivar y: The ship y-coordinate.
-    :ivar radius: The ship radius.
+    :ivar pos: The ship position (Circle)
     :ivar health: The ship's remaining health.
     :ivar DockingStatus docking_status: The docking status (UNDOCKED, DOCKED, DOCKING, UNDOCKING)
     :ivar planet: The ID of the planet the ship is docked to, if applicable.
     :ivar owner: The player ID of the owner, if any. If None, Entity is not owned.
+    :ivar velocity Circl: contains vel_x & vel_y
     """
 
     class DockingStatus(Enum):
@@ -223,19 +249,16 @@ class Ship(Entity):
         DOCKED = 2
         UNDOCKING = 3
 
-    def __init__(self, player_id, ship_id, x, y, hp, vel_x, vel_y,
-                 docking_status, planet, progress, cooldown):
-
+    def __init__(self, player_id, ship_id, x, y, hp, vel_x, vel_y, docking_status, planet, progress, cooldown):
         self.id = ship_id
-        self.x = x
-        self.y = y
+        self.pos = Circle(x, y, constants.SHIP_RADIUS)
         self.owner = player_id
-        self.radius = constants.SHIP_RADIUS
         self.health = hp
         self.docking_status = docking_status
         self.planet = planet if (docking_status is not Ship.DockingStatus.UNDOCKED) else None
         self._docking_progress = progress
         self._weapon_cooldown = cooldown
+        self.velocity = Circle(vel_x, vel_y, 0)
 
     def thrust(self, magnitude, angle):
         """
@@ -246,7 +269,12 @@ class Ship(Entity):
         :return: The command string to be passed to the Halite engine.
         :rtype: str
         """
+        # restrict magnitude between 0 and MAX_SPEED
+        if magnitude > constants.MAX_SPEED:
+            logging.ERROR("RECEIVED an invalid thrust ! %s" % magnitude)
 
+        magnitude = min(magnitude, constants.MAX_SPEED)
+        magnitude = max(magnitude, 0)
         # we want to round angle to nearest integer, but we want to round
         # magnitude down to prevent overshooting and unintended collisions
         return "t {} {} {}".format(self.id, int(magnitude), round(angle))
@@ -270,43 +298,70 @@ class Ship(Entity):
         """
         return "u {}".format(self.id)
 
-    def navigate(self, target, game_map, speed, avoid_obstacles=True, max_corrections=90, angular_step=1,
-                 ignore_ships=False, ignore_planets=False):
+    def navigate(self, target, game_map, speed, max_corrections=90, angular_step=1, ignore_ships=False,
+                 ignore_planets=False, ignore_ghosts=False, assassin=False, closest=False):
         """
-        Move a ship to a specific target position (Entity). It is recommended to place the position
-        itself here, else navigate will crash into the target. If avoid_obstacles is set to True (default)
-        will avoid obstacles on the way, with up to max_corrections corrections. Note that each correction accounts
-        for angular_step degrees difference, meaning that the algorithm will naively try max_correction degrees before giving
-        up (and returning None). The navigation will only consist of up to one command; call this method again
-        in the next turn to continue navigating to the position.
+        # Will calculate a valid path between the ship and the target
 
-        :param Entity target: The entity to which you will navigate
-        :param game_map.Map game_map: The map of the game, from which obstacles will be extracted
-        :param int speed: The (max) speed to navigate. If the obstacle is nearer, will adjust accordingly.
-        :param bool avoid_obstacles: Whether to avoid the obstacles in the way (simple pathfinding).
-        :param int max_corrections: The maximum number of degrees to deviate per turn while trying to pathfind. If exceeded returns None.
-        :param int angular_step: The degree difference to deviate if the original destination has obstacles
-        :param bool ignore_ships: Whether to ignore ships in calculations (this will make your movement faster, but more precarious)
-        :param bool ignore_planets: Whether to ignore planets in calculations (useful if you want to crash onto planets)
-        :return string: The command trying to be passed to the Halite engine or None if movement is not possible within max_corrections degrees.
-        :rtype: str
+        :param target: The target to move to
+        :param game_map: The game_map used to get the list of obstacles
+        :param speed: The maximum speed for this move
+        :param max_corrections: The number of retries in trajectory change
+        :param angular_step: The step in angle between each trajectory
+        :param ignore_ships: Should we ignore ships in obstacles list
+        :param ignore_planets:  Should we ignore planets in obstacles list
+        :param ignore_ghosts:  Should we ignore ghosts in obstacles list
+        :param assassin:  Is the ship an assassin
+        :param closest:  Shold we navigate to the target's position? or the closest position within the radius
+        :return:
         """
-        # Assumes a position, not planet (as it would go to the center of the planet otherwise)
-        if max_corrections <= 0:
-            return None
-        distance = self.calculate_distance_between(target)
-        angle = self.calculate_angle_between(target)
-        ignore = () if not (ignore_ships or ignore_planets) \
-            else Ship if (ignore_ships and not ignore_planets) \
-            else Planet if (ignore_planets and not ignore_ships) \
-            else Entity
-        if avoid_obstacles and game_map.obstacles_between(self, target, ignore):
-            new_target_dx = math.cos(math.radians(angle + angular_step)) * distance
-            new_target_dy = math.sin(math.radians(angle + angular_step)) * distance
-            new_target = Position(self.x + new_target_dx, self.y + new_target_dy)
-            return self.navigate(new_target, game_map, speed, True, max_corrections - 1, angular_step)
-        speed = speed if (distance >= speed) else distance
-        return self.thrust(speed, angle)
+
+        # Should we navigate to the point directly? or the closest points inside our radius?
+        if closest:
+            closest_target = self.closest_point_to(target)
+        else:
+            closest_target = target
+
+        final_speed, angle, ghost = navigate(self.pos, closest_target.pos, game_map, speed, max_corrections=max_corrections, angular_step=angular_step, ignore_ships=ignore_ships,
+                                             ignore_planets=ignore_planets, ignore_ghosts=ignore_ghosts, assassin=assassin)
+
+        # If there is a ghost it means we found a way to navigate
+        if ghost is not None:
+            # Add the ghost to the map
+            game_map.add_ghost((self.pos, ghost))
+            # Move
+            return self.thrust(final_speed, angle)
+
+        # Retry with an intermediate position
+        logging.debug("Can't find a path to %s, so Looking for an intermediate position" % target.id)
+        # Calculate the intermediate position
+        # Take the direction
+        new_target = calculate_direction(self.pos, target.pos)
+        # Calculate length of the direction
+        distance = calculate_distance_between(self.pos, target.pos)
+
+        # Create a new speed, much slower
+        new_speed = min(speed, distance)
+        new_speed *= INTERMEDIATE_RATIO
+        # Apply a ratio to find an intermediate point at "speed" distance
+        logging.debug("Going at a new point located at 'speed:%s' distance of the ship" % new_speed)
+        if distance != 0:
+            new_target.x *= new_speed / distance
+            new_target.y *= new_speed / distance
+
+        # Add the direction to the ship position
+        new_target.x += self.pos.x
+        new_target.y += self.pos.y
+        final_speed, angle, ghost = navigate(self.pos, new_target, game_map, new_speed,
+                                             max_corrections=max_corrections + 30, angular_step=angular_step,
+                                             ignore_ships=ignore_ships, ignore_planets=ignore_planets,
+                                             ignore_ghosts=ignore_ghosts, assassin=assassin)
+        if ghost is not None:
+            game_map.add_ghost((self.pos, ghost))
+        else:
+            logging.debug("Couldn't find a path for the intermediate position either")
+
+        return self.thrust(final_speed, angle)
 
     def can_dock(self, planet):
         """
@@ -316,7 +371,7 @@ class Ship(Entity):
         :return: True if can dock, False otherwise
         :rtype: bool
         """
-        return self.calculate_distance_between(planet) <= planet.radius + constants.DOCK_RADIUS + constants.SHIP_RADIUS
+        return calculate_distance_between(self.pos, planet.pos) <= planet.pos.radius + constants.DOCK_RADIUS + constants.SHIP_RADIUS
 
     def _link(self, players, planets):
         """
@@ -332,7 +387,7 @@ class Ship(Entity):
 
 
 
-    DEFENSE_RADIUS = 50
+    DEFENSE_RADIUS = 30
 
     @staticmethod
     def fight(self, map, foe=None):
@@ -356,7 +411,7 @@ class Ship(Entity):
             return self.navigate(self.closest_point_to(foe), map, speed=constants.MAX_SPEED)
 
         foe_ships_by_distance = {}
-        for foe_ship in map.foe_ships():
+        for foe_ship in map.get_foe_ships():
             foe_ships_by_distance.setdefault(self.calculate_distance_between(foe_ship), []).append(foe_ship)
 
         for distance in sorted(foe_ships_by_distance):
@@ -374,18 +429,6 @@ class Ship(Entity):
 
         if foe is not None:
             map.ship_assignment[self.id]['foe'] = (foe.id, foe.owner.id)
-
-        # if foe is None and 'foe' in map.ship_assignment[self.id]:
-        #     try:
-        #         foe_owner = map.get_player(map.ship_assignment[self.id][1])
-        #         foe = foe_owner.get_ship(map.ship_assignment[self.id][0])
-        #         if foe is not None:
-        #             map.ship_assignment[self.id]['foe'] = (foe.id, foe.owner.id)
-        #     except:
-        #         pass
-        #
-        # if map.ship_exist(foe):
-        #     return self.navigate(self.closest_point_to(foe), map, speed=constants.MAX_SPEED)
 
         foe_ships_by_distance = {}
         for foe_ship in map.get_foe_ships():
@@ -438,13 +481,19 @@ class Ship(Entity):
     @staticmethod
     def settle(self, map, planet=None):
 
-        logging.info('%s %s ' % (self.x, self.y))
-
         planets_by_distance = {}
 
-        if planet is None and 'planet' in map.ship_assignment[self.id]:
-            planet = map.get_planet(map.ship_assignment[self.id]['planet'])
-            logging.info('P:%s' % planet.id)
+        foe_ships_by_distance = {}
+        for foe_ship in map.get_foe_ships():
+            foe_ships_by_distance.setdefault(self.calculate_distance_between(foe_ship), []).append(foe_ship)
+
+        for distance in sorted(foe_ships_by_distance):
+
+            if distance > self.DEFENSE_RADIUS:
+                break
+
+            return self.navigate(self.closest_point_to(foe_ships_by_distance[distance][0]), map,
+                                 speed=constants.MAX_SPEED)
 
         if planet is not None and (planet.is_owned() is False or (planet.is_owned() is True \
                                                                   and planet.owner.id == map.get_me().id \
@@ -493,9 +542,10 @@ class Ship(Entity):
     @staticmethod
     def kamikaze(self, map):
         if 'planet' in map.ship_assignment[self.id]:
-            return None
+            return self.navigate(self.closest_point_to(map.get_planet(planet)), map, speed=constants.MAX_SPEED)
 
-        for planet in list(all_planets.values()):
+        planets_by_distance = {}
+        for planet in list(map.all_planets()):
             distance = self.calculate_distance_between(planet)
             planets_by_distance.setdefault(distance, []).append(planet)
 
@@ -510,7 +560,7 @@ class Ship(Entity):
         return None
 
     def can_dock_by_distance(self, distance, planet):
-        return distance < planet.radius + constants.DOCK_RADIUS + constants.SHIP_RADIUS
+        return distance < planet.pos.radius + constants.DOCK_RADIUS + constants.SHIP_RADIUS
 
     @staticmethod
     def _parse_single(player_id, tokens):
@@ -560,17 +610,13 @@ class Position(Entity):
     A simple wrapper for a coordinate. Intended to be passed to some functions in place of a ship or planet.
 
     :ivar id: Unused
-    :ivar x: The x-coordinate.
-    :ivar y: The y-coordinate.
-    :ivar radius: The position's radius (should be 0).
+    :ivar pos: The position in Circle
     :ivar health: Unused.
     :ivar owner: Unused.
     """
 
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-        self.radius = 0
+    def __init__(self, x, y, radius = 0):
+        self.pos = Circle(x, y, radius)
         self.health = None
         self.owner = None
         self.id = None
