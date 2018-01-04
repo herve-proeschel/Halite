@@ -1,9 +1,10 @@
 import abc
 import logging
 import math
+import random
 from enum import Enum
 
-from .navigation import Circle, navigate, calculate_distance_between, calculate_direction
+from .navigation import Circle, navigate, calculate_distance_between, calculate_direction, calculate_angle_between, closest_point_to
 from . import constants
 
 
@@ -38,7 +39,8 @@ class Entity:
         :return: distance
         :rtype: float
         """
-        return math.sqrt((target.pos.x - self.pos.x) ** 2 + (target.pos.y - self.pos.y) ** 2)
+
+        return calculate_distance_between(self.pos, target.pos)
 
     def calculate_angle_between(self, target):
         """
@@ -48,7 +50,8 @@ class Entity:
         :return: Angle between entities in degrees
         :rtype: float
         """
-        return math.degrees(math.atan2(target.pos.y - self.pos.y, target.pos.x - self.pos.x)) % 360
+        return calculate_angle_between(self.pos, target.pos)
+
 
     def closest_point_to(self, target, min_distance=3):
         """
@@ -60,11 +63,8 @@ class Entity:
         :return: The closest point's coordinates
         :rtype: Position
         """
-        angle = target.calculate_angle_between(self)
-        radius = target.pos.radius + min_distance
-        x = target.pos.x + radius * math.cos(math.radians(angle))
-        y = target.pos.y + radius * math.sin(math.radians(angle))
-        return Position(x, y)
+        circle = closest_point_to(self.pos, target.pos, min_distance)
+        return Position(circle.x, circle.y)
 
     @abc.abstractmethod
     def _link(self, players, planets):
@@ -299,7 +299,8 @@ class Ship(Entity):
         return "u {}".format(self.id)
 
     def navigate(self, target, game_map, speed, max_corrections=90, angular_step=1, ignore_ships=False,
-                 ignore_planets=False, ignore_ghosts=False, assassin=False, closest=False):
+                 ignore_planets=False, ignore_ghosts=False, assassin=False, closest=False,
+                 kamikaze=False):
         """
         # Will calculate a valid path between the ship and the target
 
@@ -356,10 +357,16 @@ class Ship(Entity):
                                              max_corrections=max_corrections + 30, angular_step=angular_step,
                                              ignore_ships=ignore_ships, ignore_planets=ignore_planets,
                                              ignore_ghosts=ignore_ghosts, assassin=assassin)
+
+
         if ghost is not None:
             game_map.add_ghost((self.pos, ghost))
         else:
             logging.debug("Couldn't find a path for the intermediate position either")
+
+        if kamikaze is True and target == closest_target:
+            final_speed = constants.MAX_SPEED
+            angle = calculate_angle_between(self.pos, target.pos)
 
         return self.thrust(final_speed, angle)
 
@@ -387,10 +394,16 @@ class Ship(Entity):
 
 
 
-    DEFENSE_RADIUS = 30
+    DEFENSE_RADIUS = 40
 
     @staticmethod
     def fight(self, map, foe=None):
+
+        alea = random.uniform(0, 100)
+        if alea > 100:
+            map.ship_assignment[self.id]['action'] = Ship.kamikaze
+        elif alea > 80:
+            map.ship_assignment[self.id]['action'] = Ship.settle
 
         if foe is not None:
             map.ship_assignment[self.id]['foe'] = (foe.id, foe.owner.id)
@@ -482,6 +495,7 @@ class Ship(Entity):
     def settle(self, map, planet=None):
 
         planets_by_distance = {}
+        planets_by_size = {}
 
         foe_ships_by_distance = {}
         for foe_ship in map.get_foe_ships():
@@ -495,40 +509,48 @@ class Ship(Entity):
             return self.navigate(self.closest_point_to(foe_ships_by_distance[distance][0]), map,
                                  speed=constants.MAX_SPEED)
 
-        if planet is not None and (planet.is_owned() is False or (planet.is_owned() is True \
+        if planet is not None:
+            if (planet.is_owned() is False or (planet.is_owned() is True \
                                                                   and planet.owner.id == map.get_me().id \
                                                                   and planet.is_full() is False)):
-            if self.can_dock(planet):
-                logging.info('P:docking')
-                return self.dock(planet)
+                if self.can_dock(planet):
+                    return self.dock(planet)
+                else:
+                    return self.navigate(self.closest_point_to(planet), map, speed=constants.MAX_SPEED)
+
             else:
-                logging.info('P:navigate %s' % self.calculate_distance_between(planet))
-                return self.navigate(self.closest_point_to(planet), map, speed=constants.MAX_SPEED)
+                map.ship_assignment[self.id]['action'] = Ship.bomb
+                del map.ship_assignment[self.id]['foe']
+                return Ship.bomb(self, map)
 
         all_planets = {p.id: p for p in map.all_planets()}
 
         for planet in list(all_planets.values()):
-            distance = self.calculate_distance_between(planet)
-            planets_by_distance.setdefault(distance, []).append(planet)
+            planets_by_size.setdefault(planet.remaining_resources, []).append(planet)
 
-        for distance in sorted(planets_by_distance):
-            near_planets = planets_by_distance[distance]
+        for size in sorted(planets_by_size, reverse=True):
+            big_planets = planets_by_size[size]
+            planets_by_distance = {}
+            for planet in big_planets:
+                distance = self.calculate_distance_between(planet)
+                planets_by_distance.setdefault(distance, []).append(planet)
 
-            for planet in near_planets:
+            for distance in sorted(planets_by_distance):
+                near_planets = planets_by_distance[distance]
+                for planet in near_planets:
 
-                if (planet.is_owned() is False or (planet.is_owned() is True \
-                                                   and planet.owner.id == map.get_me().id \
-                                                   and planet.is_full() is False)) \
-                        and self.can_dock_by_distance(distance, planet):
-                    del map.ship_assignment[self.id]
-                    return self.dock(planet)
+                    if (planet.is_owned() is False or (planet.is_owned() is True \
+                                                       and planet.owner.id == map.get_me().id \
+                                                       and planet.is_full() is False)) \
+                            and self.can_dock_by_distance(distance, planet):
+                        del map.ship_assignment[self.id]
+                        return self.dock(planet)
 
-                if planet.id in map.planets_assigned and distance > 4:
-                    map.planets_assigned.remove(planet.id)
-                    map.ship_assignment[self.id] = {'action': self.settle, 'planet': planet.id}
-                    return self.navigate(self.closest_point_to(planet), map,
-                                         speed=constants.MAX_SPEED)
-
+                    if planet.id in map.planets_assigned and distance > 4:
+                        map.planets_assigned.remove(planet.id)
+                        map.ship_assignment[self.id] = {'action': self.settle, 'planet': planet.id}
+                        return self.navigate(self.closest_point_to(planet), map,
+                                             speed=constants.MAX_SPEED)
 
 
         del map.ship_assignment[self.id]
@@ -541,8 +563,15 @@ class Ship(Entity):
 
     @staticmethod
     def kamikaze(self, map):
+
         if 'planet' in map.ship_assignment[self.id]:
-            return self.navigate(self.closest_point_to(map.get_planet(planet)), map, speed=constants.MAX_SPEED)
+            target = map.get_planet(map.ship_assignment[self.id]['planet'])
+            if target is not None:
+                final_speed = constants.MAX_SPEED
+                angle = calculate_angle_between(self.pos, target.pos)
+                cmd = self.thrust(final_speed, angle)
+                logging.info('Kamikaze: %s'%cmd)
+                return  cmd
 
         planets_by_distance = {}
         for planet in list(map.all_planets()):
@@ -555,7 +584,9 @@ class Ship(Entity):
             for planet in near_planets:
                 if planet.is_owned() and planet.owner.id != map.get_me().id:
                     map.ship_assignment[self.id]['planet'] = planet.id
-                    return self.navigate(self.closest_point_to(planet), map, speed=constants.MAX_SPEED)
+                    return self.navigate(self.closest_point_to(planet), map,
+                                         speed=constants.MAX_SPEED,
+                                         kamikaze=True)
 
         return None
 

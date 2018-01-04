@@ -13,7 +13,7 @@ class Map:
     :ivar height: Map height
     """
 
-    MAX_SHIPS = 20
+    MAX_SHIPS = 30
 
     def __init__(self, my_id, width, height):
         """
@@ -244,7 +244,7 @@ class Map:
     def assign_ship(self, ship, map):
 
         import logging
-        logging.info("A%s F%s B%s D%s S%s" % (self.ships, self.fighters, self.bombers, self.defenders, self.settlers))
+        logging.info("A%s F%s B%s D%s S%s K%s" % (self.ships, self.fighters, self.bombers, self.defenders, self.settlers, self.kamikazes))
 
         if ship.id in self.ship_assignment and self.ship_assignment[ship.id]['action'].__name__ != 'nothing':
             return
