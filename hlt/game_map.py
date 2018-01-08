@@ -13,7 +13,7 @@ class Map:
     :ivar height: Map height
     """
 
-    MAX_SHIPS = 30
+    MAX_SHIPS = 40
 
     def __init__(self, my_id, width, height):
         """
@@ -128,6 +128,7 @@ class Map:
         self.bombers = 0
         self.settlers = 0
         self.defenders = 0
+        self.realocate_defender = 0
 
         self.undocked_ship = []
         for s in self.get_me().all_ships():
@@ -144,6 +145,8 @@ class Map:
                 continue
             if v['action'].__name__ == 'settle':
                 self.settlers += 1
+                if 'planet' in v:
+                    self._planets[v['planet']].anticipating_remaining_resources -= 1
                 continue
             if v['action'].__name__ == 'defend':
                 self.defenders += 1
@@ -244,34 +247,58 @@ class Map:
     def assign_ship(self, ship, map):
 
         import logging
-        logging.info("A%s F%s B%s D%s S%s K%s" % (self.ships, self.fighters, self.bombers, self.defenders, self.settlers, self.kamikazes))
+
+        if self.defenders >= 6 \
+            and self.realocate_defender < 4 \
+            and ship.id in self.ship_assignment and self.ship_assignment[ship.id]['action'].__name__ != 'defend':
+            self.realocate_defender += 1
+            self.defenders -= 1
+            self.ship_assignment[ship.id]['action'] = Ship.fight
 
         if ship.id in self.ship_assignment and self.ship_assignment[ship.id]['action'].__name__ != 'nothing':
+            logging.info('Already Assigned ship: %s %s' % (ship.id, self.ship_assignment[ship.id]['action'].__name__))
             return
 
-        if self.kamikazes > 0:
-            self.ship_assignment[ship.id] = {'action': ship.fight}
-            self.kamikazes -= 1
-            return
+        logging.info('Assign ship: %s' % ship.id)
 
-        if ship.id % 3 == 0:
+        if len(self.all_players()) == 2:
+            first_bomber = 2
+        else:
+            first_bomber = 4
+
+        if ship.id == first_bomber:
             self.ship_assignment[ship.id] = {'action': ship.bomb}
-            self.bombers += 1
+            self.fighters += 1
+            return
+        elif ship.id % 3 == 0 and ship.id > first_bomber:
+            self.ship_assignment[ship.id] = {'action': ship.defend}
+            self.defenders += 1
             return
 
-        # if ship.id % 5 == 0:
-        #     self.defenders += 1
-        #     self.ship_assignment[ship.id] = {'action': ship.defend, 'position': ship}
+        planets_by_distance = {}
+        for planet in list(self.all_planets()):
+            distance = ship.calculate_distance_between(planet)
+            planets_by_distance.setdefault(distance, []).append(planet)
 
-        for p in map.all_planets():
-            if p.is_owned() is False:
-                self.settlers += 1
-                self.ship_assignment[ship.id] = {'action': ship.settle}
-                return
+        for distance in sorted(planets_by_distance.keys()):
+            near_planets = planets_by_distance[distance]
+            for p in near_planets:
+                logging.info('%s %s %s' % (p.id, ship.id, p.anticipating_remaining_resources))
+                if (p.is_owned() is False or p.owner.id == self.get_me().id) and p.anticipating_remaining_resources > 0 :
+                    self.settlers += 1
+                    p.anticipating_remaining_resources -= 1
+                    self.ship_assignment[ship.id] = {'action': ship.settle, 'planet': p.id}
+                    return
 
-        self.fighters += 1
-        self.ship_assignment[ship.id] = {'action': ship.bomb}
-        return
+        for distance in sorted(planets_by_distance.keys()):
+            near_planets = planets_by_distance[distance]
+            for p in near_planets:
+                if p.is_owned() is True and p.owner.id != map.get_me().id:
+                    self.bombers += 1
+                    self.ship_assignment[ship.id] = {'action': ship.bomb, 'planet': p.id}
+                    return
+
+        self.ship_assignment[ship.id] = {'action': ship.defend}
 
 
 class Player:
@@ -299,7 +326,7 @@ class Player:
         :return: The ship designated by ship_id belonging to this user.
         :rtype: entity.Ship
         """
-        return self._ships.get(ship_id)
+        return self._ships.get(ship_id, None)
 
     @staticmethod
     def _parse_single(tokens):

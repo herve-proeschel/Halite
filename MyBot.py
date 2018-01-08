@@ -24,6 +24,7 @@ try:
         ships = game_map.undocked_ship
         nb_ships = SHIPS_CONTROL_TIMOUT
 
+        logging.info('Number of undocked ship %s'% len(ships))
         for ship in ships:
             nb_ships -= 1
             cmd = None
