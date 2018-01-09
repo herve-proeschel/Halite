@@ -478,6 +478,10 @@ class Ship(Entity):
     @staticmethod
     def defend(self, map):
 
+        alea = random.uniform(0, 100)
+        if alea > 80:
+            map.ship_assignment[self.id]['action'] = Ship.fight
+            return  Ship.fight(self, map)
 
         if 'position' in  map.ship_assignment[self.id]:
             position = map.ship_assignment[self.id]['position']
@@ -502,6 +506,15 @@ class Ship(Entity):
 
             return self.navigate(self.closest_point_to(foe_ships_by_distance[distance][0]), map,
                                  speed=constants.MAX_SPEED)
+
+
+        if 'previous_planet' in map.ship_assignment[self.id]:
+            planet = map.get_planet(map.ship_assignment[self.id]['previous_planet'])
+            if planet.anticipating_remaining_resources > 0:
+                planet.anticipating_remaining_resources -= 1
+                map.ship_assignment[self.id]['action'] = Ship.settle
+                map.ship_assignment[self.id]['planet'] = map.ship_assignment[self.id]['previous_planet']
+                return Ship.settle(self, map)
 
         map.ship_assignment[self.id]['action'] = Ship.fight
         return Ship.fight(self, map)
@@ -544,16 +557,22 @@ class Ship(Entity):
         #         return Ship.pure_settle(self, map)
 
         foe_ships_by_distance = {}
+
+        planet = map.get_planet(map.ship_assignment[self.id]['planet'])
+
         for foe_ship in map.get_foe_ships():
             foe_ships_by_distance.setdefault(self.calculate_distance_between(foe_ship), []).append(foe_ship)
 
         for distance in sorted(foe_ships_by_distance.keys()):
             if distance > self.DEFENSE_RADIUS:
                 break
-            return self.navigate(self.closest_point_to(foe_ships_by_distance[distance][0]), map,
-                                 speed=constants.MAX_SPEED)
 
-        planet = map.get_planet(map.ship_assignment[self.id]['planet'])
+            planet.anticipating_remaining_resources += 1
+            map.ship_assignment[self.id]['previous_planet'] = map.ship_assignment[self.id]['planet']
+            del  map.ship_assignment[self.id]['planet']
+            map.ship_assignment[self.id]['action'] = Ship.defend
+            return self.defend(self, map)
+
 
         if planet is None:
             del map.ship_assignment[self.id]
@@ -570,7 +589,7 @@ class Ship(Entity):
             return self.navigate(self.closest_point_to(planet), map,
                                  speed=constants.MAX_SPEED)
 
-        map.ship_assignment[self.id]['action'] = Ship.fight
+        del map.ship_assignment[self.id]
         return Ship.fight(self, map)
 
     @staticmethod
