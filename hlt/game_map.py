@@ -3,6 +3,8 @@ from hlt.entity import Ship
 from . import collision, entity
 from .collision import intersect_segment_circle
 
+import logging
+
 
 class Map:
     """
@@ -131,10 +133,13 @@ class Map:
         self.realocate_defender = 0
 
         self.undocked_ship = []
+        self.undocking_ship = []
         for s in self.get_me().all_ships():
             if s.docking_status == Ship.DockingStatus.UNDOCKED:
                 self.ships += 1
                 self.undocked_ship.append(s)
+            if s.docking_status == Ship.DockingStatus.UNDOCKING:
+                self.undocking_ship.append(s)
 
         for k, v in self.ship_assignment.items():
             if v['action'].__name__ == 'fight':
@@ -246,7 +251,7 @@ class Map:
 
     def assign_ship(self, ship, map):
 
-        import logging
+
 
         if self.defenders >= 6 \
             and self.realocate_defender < 4 \
@@ -261,19 +266,19 @@ class Map:
 
         logging.info('Assign ship: %s' % ship.id)
 
-        if len(self.all_players()) == 2:
-            first_bomber = 2
-        else:
-            first_bomber = 4
-
-        if ship.id == first_bomber:
-            self.ship_assignment[ship.id] = {'action': ship.bomb}
-            self.fighters += 1
-            return
-        elif ship.id % 3 == 0 and ship.id > first_bomber:
-            self.ship_assignment[ship.id] = {'action': ship.defend}
-            self.defenders += 1
-            return
+        # if len(self.all_players()) == 2:
+        #     first_bomber = 2
+        # else:
+        #     first_bomber = 4
+        #
+        # if ship.id == first_bomber:
+        #     self.ship_assignment[ship.id] = {'action': ship.bomb}
+        #     self.fighters += 1
+        #     return
+        # elif ship.id % 3 == 0 and ship.id > first_bomber:
+        #     self.ship_assignment[ship.id] = {'action': ship.defend}
+        #     self.defenders += 1
+        #     return
 
         planets_by_distance = {}
         for planet in list(self.all_planets()):
@@ -299,6 +304,48 @@ class Map:
                     return
 
         self.ship_assignment[ship.id] = {'action': ship.defend}
+
+    def defend_planet(self, planet, map):
+
+        if planet.is_owned() is False or planet.owner.id != map.get_me().id:
+            return {}
+
+        planet_defenders = self.defenders + self.fighters + self.settlers
+
+        if planet_defenders > 2:
+            return {}
+
+        foe_ships_by_distance = {}
+
+        for foe_ship in map.get_foe_ships():
+            foe_ships_by_distance.setdefault(planet.calculate_distance_between(foe_ship), []).append(foe_ship)
+
+        cmd = {}
+        docked_ship = iter(planet.all_docked_ships())
+        for distance in sorted(foe_ships_by_distance.keys()):
+            if distance > planet.DEFENSE_RADIUS + planet.pos.radius:
+                break
+
+            for foe_ship in foe_ships_by_distance[distance]:
+
+                if foe_ship.docking_status != Ship.DockingStatus.UNDOCKED:
+                    continue
+
+                if planet_defenders > 0:
+                    planet_defenders -= 1
+                    continue
+
+                logging.info('Try to awake a ship')
+                try:
+                    ship = next(docked_ship)
+                    logging.info('Awake a ship: %s' % ship.id)
+                    self.ship_assignment[ship.id] = {'action': ship.defend, 'previous_planet':planet.id}
+                    cmd[ship.id] = ship.undock()
+                except:
+                    logging.exception('Awake a ship failed')
+                    return cmd
+
+        return cmd
 
 
 class Player:

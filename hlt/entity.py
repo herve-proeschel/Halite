@@ -77,6 +77,8 @@ class Entity:
     def __repr__(self):
         return self.__str__()
 
+    DEFENSE_RADIUS = 35
+
 
 class Planet(Entity):
     """
@@ -94,6 +96,8 @@ class Planet(Entity):
     :ivar owner: The player ID of the owner, if any. If None, Entity is not owned.
 
     """
+
+    DEFENSE_RADIUS = 70
 
     def __init__(self, planet_id, x, y, hp, radius, docking_spots, current, remaining, owned, owner, docked_ships):
         self.id = planet_id
@@ -126,6 +130,15 @@ class Planet(Entity):
         :rtype: list[Ship]
         """
         return list(self._docked_ships.values())
+
+    def all_docked_ships_dict(self):
+        """
+        The list of all ships docked into the planet
+
+        :return: The list of all ships docked
+        :rtype: list[Ship]
+        """
+        return self._docked_ships
 
     def is_owned(self):
         """
@@ -396,7 +409,7 @@ class Ship(Entity):
 
 
 
-    DEFENSE_RADIUS = 35
+
 
     @staticmethod
     def fight(self, map):
@@ -568,7 +581,7 @@ class Ship(Entity):
                 break
 
             planet.anticipating_remaining_resources += 1
-            map.ship_assignment[self.id]['previous_planet'] = map.ship_assignment[self.id]['planet']
+            map.ship_assignment[self.id][''] = map.ship_assignment[self.id]['planet']
             del  map.ship_assignment[self.id]['planet']
             map.ship_assignment[self.id]['action'] = Ship.defend
             return self.defend(self, map)

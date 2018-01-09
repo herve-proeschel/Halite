@@ -19,7 +19,7 @@ try:
         # Update the map for the new turn and get the latest version
         game_map = game.update_map()
 
-        command_queue = []
+        command_queue = {}
 
         ships = game_map.undocked_ship
         nb_ships = SHIPS_CONTROL_TIMOUT
@@ -33,7 +33,7 @@ try:
             cmd = game_map.ship_assignment[ship.id]['action'](ship, game_map)
 
             if cmd is not None:
-                command_queue.append(cmd)
+                command_queue[ship.id] = cmd
 
 
             if nb_ships <= 0:
@@ -43,8 +43,16 @@ try:
                 last_time = current_time
                 nb_ships = SHIPS_CONTROL_TIMOUT
 
+        for planet in game_map.all_planets():
+            undock = game_map.defend_planet(planet, game_map)
+            for k, v in undock.items():
+                command_queue[k] = v
+
+        for ship in game_map.undocking_ship:
+            command_queue[ship.id] = ship.undock()
+
         # Send our set of commands to the Halite engine for this turn
-        game.send_command_queue(command_queue)
+        game.send_command_queue(list(command_queue.values()))
     # TURN END
 except:
     logging.exception('GAME CRASHED')
