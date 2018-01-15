@@ -63,7 +63,7 @@ class Map:
         :return: The planet associated with planet_id
         :rtype: entity.Planet
         """
-        return self._planets.get(planet_id)
+        return self._planets.get(planet_id, None)
 
     def all_planets(self):
         """
@@ -206,13 +206,13 @@ class Map:
         :rtype: list[entity.Entity]
         """
         obstacles = []
-        if not ignore_ships:
+        if ignore_ships is False:
             for enemy_ship in self.all_ships():
                 if enemy_ship == ship or enemy_ship == target:
                     continue
                 if intersect_segment_circle(ship, target, enemy_ship, fudge=ship.pos.radius + 0.1):
                     obstacles.append(enemy_ship)
-        if not ignore_planets:
+        if ignore_planets is False:
             for planet in self.all_planets():
                 if planet == ship or planet == target:
                     continue
@@ -249,6 +249,21 @@ class Map:
 
         return ship.id in self._foe_ships_exit_table[ship.owner.id]
 
+    def assign_ship_short(self, ship, map):
+
+        foe_ships_by_distance = {}
+        for foe_ship in map.get_foe_ships():
+            foe_ships_by_distance.setdefault(ship.calculate_distance_between(foe_ship), []).append(foe_ship)
+
+        for distance in sorted(foe_ships_by_distance):
+            if distance < 90:
+                map.ship_assignment[ship.id] = {'action': Ship.fight}
+                return
+
+        return self.assign_ship(ship, map)
+
+
+
     def assign_ship(self, ship, map):
 
 
@@ -266,23 +281,9 @@ class Map:
 
         logging.info('Assign ship: %s' % ship.id)
 
-        # if len(self.all_players()) == 2:
-        #     first_bomber = 2
-        # else:
-        #     first_bomber = 4
-        #
-        # if ship.id == first_bomber:
-        #     self.ship_assignment[ship.id] = {'action': ship.bomb}
-        #     self.fighters += 1
-        #     return
-        # elif ship.id % 3 == 0 and ship.id > first_bomber:
-        #     self.ship_assignment[ship.id] = {'action': ship.defend}
-        #     self.defenders += 1
-        #     return
-
         planets_by_distance = {}
         for planet in list(self.all_planets()):
-            distance = ship.calculate_distance_between(planet)
+            distance = ship.calculate_distance_between(planet) / (planet.num_docking_spots)
             planets_by_distance.setdefault(distance, []).append(planet)
 
         for distance in sorted(planets_by_distance.keys()):
