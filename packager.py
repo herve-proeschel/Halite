@@ -14,7 +14,5 @@ if __name__ == '__main__':
     zipf.write("MyBot.py")
     zipf.write("setup.py")
     zipf.write("install.sh")
-    # zipf.write("manager.py")
-    # zipf.write("drone.py")
     zipf.close()
 

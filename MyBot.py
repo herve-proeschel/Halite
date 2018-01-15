@@ -14,27 +14,35 @@ DELTA_TIME = 1.6
 
 try:
     me = None
+    turn = -1
     while True:
         last_time = time.time()
         # Update the map for the new turn and get the latest version
         game_map = game.update_map()
+        turn += 1
 
         command_queue = {}
 
         ships = game_map.undocked_ship
         nb_ships = SHIPS_CONTROL_TIMOUT
 
+        players = game_map.all_players()
+
+
         logging.info('Number of undocked ship %s'% len(ships))
         for ship in ships:
             nb_ships -= 1
             cmd = None
 
-            game_map.assign_ship(ship, game_map)
-            cmd = game_map.ship_assignment[ship.id]['action'](ship, game_map)
+            if turn < 10 and len(players) == 2:
+                game_map.assign_ship_short(ship, game_map)
+                cmd = game_map.ship_assignment[ship.id]['action'](ship, game_map)
+            else:
+                game_map.assign_ship(ship, game_map)
+                cmd = game_map.ship_assignment[ship.id]['action'](ship, game_map)
 
             if cmd is not None:
                 command_queue[ship.id] = cmd
-
 
             if nb_ships <= 0:
                 current_time = time.time()
