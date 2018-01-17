@@ -131,33 +131,82 @@ class Map:
         self.settlers = 0
         self.defenders = 0
         self.realocate_defender = 0
+        self.runners = 0
+
 
         self.undocked_ship = []
         self.undocking_ship = []
+
+        self.living_ship = {}
+
         for s in self.get_me().all_ships():
+            self.living_ship[s.id] = True
             if s.docking_status == Ship.DockingStatus.UNDOCKED:
                 self.ships += 1
                 self.undocked_ship.append(s)
             if s.docking_status == Ship.DockingStatus.UNDOCKING:
                 self.undocking_ship.append(s)
 
+        self.foe_ships_assignment = {}
+        to_delete = []
         for k, v in self.ship_assignment.items():
+            try:
+                self.living_ship[k]
+            except:
+                to_delete.append(k)
+                continue
+
             if v['action'].__name__ == 'fight':
                 self.fighters += 1
+                try:
+                    foe_owner = map.get_player(map.ship_assignment[self.id]['foe'][1])
+                    foe = foe_owner.get_ship(map.ship_assignment[self.id]['foe'][0])
+                    if foe is None:
+                        try:
+                            del self.ship_assignment[self.id]['foe']
+                        except:
+                            pass
+
+                    else:
+                        self.foe_ships_assignment[foe.id] = k
+                except:
+                    pass
                 continue
             if v['action'].__name__ == 'bomb':
                 self.bombers += 1
                 continue
-            if v['action'].__name__ == 'settle':
+            elif v['action'].__name__ == 'settle':
                 self.settlers += 1
                 if 'planet' in v:
                     self._planets[v['planet']].anticipating_remaining_resources -= 1
                 continue
-            if v['action'].__name__ == 'defend':
+            elif v['action'].__name__ == 'defend':
                 self.defenders += 1
                 continue
+            elif v['action'].__name__ == 'runner':
+                self.runners += 1
+                continue
+            elif v['action'].__name__ == 'rabbit':
+                self.runners += 1
+                continue
+
+        for k in to_delete:
+            del self.ship_assignment[k]
 
         self.kamikazes = self.ships - self.MAX_SHIPS
+
+        players = self.all_players()
+        planets_by_player = {}
+
+        for planet in list(self.all_planets()):
+            if planet.is_owned() is True:
+                try:
+                    planets_by_player[planet.owner.id].append(planet.id)
+                except:
+                    planets_by_player[planet.owner.id] = [planet.id, ]
+
+        self.planets_by_player = planets_by_player
+        logging.info(self.planets_by_player)
 
     def all_ghost(self):
         """
@@ -251,6 +300,13 @@ class Map:
 
     def assign_ship_short(self, ship, map):
 
+        if ship.id in self.ship_assignment and self.ship_assignment[ship.id]['action'].__name__ != 'nothing':
+            logging.info('Already Assigned ship: %s %s' % (ship.id, self.ship_assignment[ship.id]['action'].__name__))
+
+        if ship.id in self.ship_assignment and self.ship_assignment[ship.id]['action'].__name__ == 'rabbit' and map.fighters < 2:
+            logging.info('Already Assigned ship: %s %s' % (ship.id, self.ship_assignment[ship.id]['action'].__name__))
+            return
+
         foe_ships_by_distance = {}
         for foe_ship in map.get_foe_ships():
             foe_ships_by_distance.setdefault(ship.calculate_distance_between(foe_ship), []).append(foe_ship)
@@ -259,6 +315,11 @@ class Map:
             if distance < 90:
                 map.ship_assignment[ship.id] = {'action': Ship.fight}
                 return
+            elif map.runners < 1:
+                map.ship_assignment[ship.id] = {'action': ship.rabbit}
+                map.runners += 1
+                return
+
 
         return self.assign_ship(ship, map)
 
@@ -268,12 +329,12 @@ class Map:
 
 
 
-        if self.defenders >= 6 \
-            and self.realocate_defender < 4 \
-            and ship.id in self.ship_assignment and self.ship_assignment[ship.id]['action'].__name__ != 'defend':
-            self.realocate_defender += 1
-            self.defenders -= 1
-            self.ship_assignment[ship.id]['action'] = Ship.fight
+        # if self.defenders >= 6 \
+        #     and self.realocate_defender < 4 \
+        #     and ship.id in self.ship_assignment and self.ship_assignment[ship.id]['action'].__name__ != 'defend':
+        #     self.realocate_defender += 1
+        #     self.defenders -= 1
+        #     self.ship_assignment[ship.id]['action'] = Ship.fight
 
         if ship.id in self.ship_assignment and self.ship_assignment[ship.id]['action'].__name__ != 'nothing':
             logging.info('Already Assigned ship: %s %s' % (ship.id, self.ship_assignment[ship.id]['action'].__name__))
@@ -296,6 +357,16 @@ class Map:
                     self.ship_assignment[ship.id] = {'action': ship.settle, 'planet': p.id}
                     return
 
+        if self.runners < 1 and len(map.all_players())>2:
+            self.ship_assignment[ship.id] = {'action': ship.runner}
+            self.runners += 1
+            return
+
+        if self.runners < 2 and len(map.all_players())>2:
+            self.ship_assignment[ship.id] = {'action': ship.rabbit}
+            self.runners += 1
+            return
+
         for distance in sorted(planets_by_distance.keys()):
             near_planets = planets_by_distance[distance]
             for p in near_planets:
@@ -304,16 +375,22 @@ class Map:
                     self.ship_assignment[ship.id] = {'action': ship.bomb, 'planet': p.id}
                     return
 
-        self.ship_assignment[ship.id] = {'action': ship.defend}
+        if self.runners < 4 and len(self.all_players()) > 2:
+            self.ship_assignment[ship.id] = {'action': ship.rabbit}
+            self.runners += 1
+            return
+
+
+        self.ship_assignment[ship.id] = {'action': ship.fight}
 
     def defend_planet(self, planet, map):
 
         if planet.is_owned() is False or planet.owner.id != map.get_me().id:
             return {}
 
-        planet_defenders = self.defenders + self.fighters + self.settlers
+        planet_defenders = self.defenders + self.fighters + self.settlers + self.runners
 
-        if planet_defenders > 2:
+        if planet_defenders > 1:
             return {}
 
         foe_ships_by_distance = {}

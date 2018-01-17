@@ -2,7 +2,7 @@
 from libc.math cimport sqrt, M_PI, sin, cos, round, atan2, acos
 ASSASSIN_AVOID_RADIUS = 7
 NAVIGATION_SHIP_DISTANCE = 90
-GHOST_RATIO_RADIUS = 1.6
+GHOST_RATIO_RADIUS = 1.4
 
 cdef double radians(double angle):
     """
@@ -85,6 +85,14 @@ cpdef double calculate_angle_between(Circle p1, Circle p2):
     :rtype: float
     """
     return (degrees(atan2(p2.y - p1.y, p2.x - p1.x))) % 360
+
+cpdef double reverse_angle(angle):
+    """
+    Reverse the angle in degrees.
+    :param angle: angle in degree ie angle + reversed angle == 0 % 360 degree
+    :rtype: float
+    """
+    return (angle + 180) % 360
 
 cpdef double calculate_length(Circle v1):
     """
@@ -266,6 +274,28 @@ cdef Circle dx_target(start, angle, distance):
     new_target = Circle(start.x + new_target_dx, start.y + new_target_dy)
     return new_target
 
+cpdef Circle op_target(Circle ship, Circle target,int max_x, int max_y):
+    cdef Circle direction
+    cdef double new_target_dx = 0
+    cdef double new_target_dy = 0
+    cdef double deltax = 0
+    cdef double deltay = 0
+    cdef Circle new_target
+
+    direction = calculate_direction(ship, target)
+    new_target_dx = ship.x - direction.x
+    new_target_dy = ship.y - direction.y
+
+    if new_target_dx < 0:
+        deltax = 0 - new_target_dx
+        new_target_dx = 1
+    elif new_target_dx > max_x:
+        deltax = new_target_dx - max_x
+        new_target_dx = max_x - 1
+
+    new_target = Circle(new_target_dx, new_target_dy, target.radius  )
+    return new_target
+
 cpdef tuple navigate(Circle ship, Circle target, game_map, double speed, int max_corrections=90, int angular_step=1,
                      bint ignore_ships=False, bint ignore_planets=False, ignore_ghosts=False, assassin=False):
     """
@@ -289,7 +319,7 @@ cpdef tuple navigate(Circle ship, Circle target, game_map, double speed, int max
     :rtype: tuple
     """
 
-    """
+    """ass
     debug_str = "navigate(ship=%s, target=%s, game_map, speed=%s, max_corrections=%s, angular_spep=%s, "
     debug_str += "ignore_ships=%s, ignore_planets=%s, ignore_ghosts=%s, assassin=%s)"
     debug_str = debug_str % (

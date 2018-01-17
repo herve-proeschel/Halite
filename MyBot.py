@@ -51,10 +51,11 @@ try:
                 last_time = current_time
                 nb_ships = SHIPS_CONTROL_TIMOUT
 
-        for planet in game_map.all_planets():
-            undock = game_map.defend_planet(planet, game_map)
-            for k, v in undock.items():
-                command_queue[k] = v
+        if len(players) > 2:
+            for planet in game_map.all_planets():
+                undock = game_map.defend_planet(planet, game_map)
+                for k, v in undock.items():
+                    command_queue[k] = v
 
         for ship in game_map.undocking_ship:
             command_queue[ship.id] = ship.undock()

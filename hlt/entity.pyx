@@ -4,7 +4,7 @@ import math
 import random
 from enum import Enum
 
-from .navigation import Circle, navigate, calculate_distance_between, calculate_direction, calculate_angle_between, closest_point_to
+from .navigation import Circle, navigate, calculate_distance_between, calculate_direction, calculate_angle_between, closest_point_to, op_target
 from . import constants
 
 
@@ -414,27 +414,21 @@ class Ship(Entity):
     @staticmethod
     def fight(self, map):
 
-        # alea = random.uniform(0, 100)
-        # if alea > 85:
-        #     del map.ship_assignment[self.id]
-        #     return
-
-
         if self.docking_status in [Ship.DockingStatus.DOCKED, Ship.DockingStatus.DOCKING]:
             return self.undock()
 
         foe = None
-        if 'foe' in map.ship_assignment[self.id]:
-            try:
-                foe_owner = map.get_player(map.ship_assignment[self.id][1])
-                foe = foe_owner.get_ship(map.ship_assignment[self.id][0])
-                if foe is not None:
-                    map.ship_assignment[self.id]['foe'] = (foe.id, foe.owner.id)
-            except:
-                pass
+
+        try:
+            foe_owner = map.get_player(map.ship_assignment[self.id]['foe'][1])
+            foe = foe_owner.get_ship(map.ship_assignment[self.id]['foe'][0])
+            if foe is None:
+                del map.ship_assignment[self.id]['foe']
+        except:
+            pass
 
         if foe is not None and map.ship_exist(foe):
-            return self.navigate(self.closest_point_to(foe), map, speed=constants.MAX_SPEED)
+            return self.navigate(self.closest_point_to(foe), map, speed=constants.MAX_SPEED, assassin=True)
 
         foe_ships_by_distance = {}
         for foe_ship in map.get_foe_ships():
@@ -444,10 +438,13 @@ class Ship(Entity):
 
             near_foe_ships = foe_ships_by_distance[distance]
             for foe_ship in near_foe_ships:
-                map.ship_assignment[self.id]['foe'] = (foe_ship.id, foe_ship.owner.id)
-                return self.navigate(self.closest_point_to(foe_ship), map, speed=constants.MAX_SPEED)
-
-
+                try:
+                    map.foe_ships_assignment[foe_ship.id]
+                    continue
+                except:
+                    map.foe_ships_assignment[foe_ship.id] = self.id
+                    map.ship_assignment[self.id]['foe'] = (foe_ship.id, foe_ship.owner.id)
+                    return self.navigate(self.closest_point_to(foe_ship), map, speed=constants.MAX_SPEED, assassin=True)
 
         del map.ship_assignment[self.id]
         return None
@@ -462,22 +459,18 @@ class Ship(Entity):
 
         foe_ship = None
 
-        if 'foe' in map.ship_assignment[self.id]:
-            foe_id, foe_owner_id = map.ship_assignment[self.id]['foe']
-            foe_ship = map.get_player(foe_owner_id).get_ship(foe_id)
+        try:
+            foe_owner = map.get_player(map.ship_assignment[self.id]['foe'][1])
+            foe_ship = foe_owner.get_ship(map.ship_assignment[self.id]['foe'][0])
+            if foe_ship is None:
+                del map.ship_assignment[self.id]['foe']
+        except:
+            pass
 
         if foe_ship is not None:
             if foe_ship.planet is not None:
                 map.ship_assignment[self.id]['planet'] = foe_ship.planet.id
             return self.navigate(self.closest_point_to(foe_ship), map, speed=constants.MAX_SPEED, assassin=True)
-
-        # if 'planet' in map.ship_assignment[self.id]:
-        #     nearest_planet = map.get_planet(map.ship_assignment[self.id]['planet'])
-        #
-        # if nearest_planet is not None:
-        #     nearest_planet_distance = self.calculate_distance_between(nearest_planet)
-        # else:
-        #     nearest_planet_distance = map.width * 2
 
         foe_ships_by_distance = {}
         for foe_ship in map.get_foe_ships():
@@ -488,19 +481,16 @@ class Ship(Entity):
             if closest_foe is None:
                 closest_foe = distance
 
-            # if distance > nearest_planet_distance + self.DEFENSE_RADIUS and \
-            #         ((nearest_planet.is_owned() is False or nearest_planet.owner.id == map.get_me().id)
-            #          and nearest_planet.anticipating_remaining_resources > 0):
-            #     nearest_planet.anticipating_remaining_resources -= 1
-            #     map.ship_assignment[self.id]['action'] = Ship.settle
-            #     map.ship_assignment[self.id]['planet'] = nearest_planet.id
-            #     return Ship.settle(self, map)
-
             near_foe_ships = foe_ships_by_distance[distance]
             for foe_ship in near_foe_ships:
-                if foe_ship.docking_status != Ship.DockingStatus.UNDOCKED or distance < 10:
-                    map.ship_assignment[self.id]['foe'] = (foe_ship.id, foe_ship.owner.id)
-                    return self.navigate(self.closest_point_to(foe_ship), map, speed=constants.MAX_SPEED, assassin=True)
+                try:
+                    map.foe_ships_assignment[foe_ship.id]
+                    continue
+                except:
+                    if foe_ship.docking_status != Ship.DockingStatus.UNDOCKED or distance < 10:
+                        map.foe_ships_assignment[foe_ship.id] = self.id
+                        map.ship_assignment[self.id]['foe'] = (foe_ship.id, foe_ship.owner.id)
+                        return self.navigate(self.closest_point_to(foe_ship), map, speed=constants.MAX_SPEED, assassin=True)
         foe_ship = foe_ships_by_distance[closest_foe][0]
         map.ship_assignment[self.id]['foe'] = (foe_ship.id, foe_ship.owner.id)
 
@@ -536,7 +526,7 @@ class Ship(Entity):
                 break
 
             return self.navigate(self.closest_point_to(foe_ships_by_distance[distance][0]), map,
-                                 speed=constants.MAX_SPEED)
+                                 speed=constants.MAX_SPEED, assassin=True)
 
 
         if 'previous_planet' in map.ship_assignment[self.id]:
@@ -581,15 +571,12 @@ class Ship(Entity):
     @staticmethod
     def settle(self, map):
 
-        # if len(map.all_players()) > 2:
-        #     alea = random.uniform(0, 100)
-        #     if alea > 85:
-        #         map.ship_assignment[self.id]['action'] = Ship.pure_settle
-        #         return Ship.pure_settle(self, map)
-
         foe_ships_by_distance = {}
 
         planet = map.get_planet(map.ship_assignment[self.id]['planet'])
+
+        if planet is not None and planet.remaining_resources == 0:
+            planet = None
 
         for foe_ship in map.get_foe_ships():
             foe_ships_by_distance.setdefault(self.calculate_distance_between(foe_ship), []).append(foe_ship)
@@ -598,13 +585,12 @@ class Ship(Entity):
             if distance > self.DEFENSE_RADIUS:
                 break
 
-
-            planet.anticipating_remaining_resources += 1
-            map.ship_assignment[self.id]['previous_planet'] = map.ship_assignment[self.id]['planet']
-            del  map.ship_assignment[self.id]['planet']
+            if planet is not None:
+                planet.anticipating_remaining_resources += 1
+                map.ship_assignment[self.id]['previous_planet'] = map.ship_assignment[self.id]['planet']
+                del  map.ship_assignment[self.id]['planet']
             map.ship_assignment[self.id]['action'] = Ship.defend
             return self.defend(self, map)
-
 
         if planet is None:
             map.ship_assignment[self.id]['action'] = Ship.fight
@@ -628,6 +614,104 @@ class Ship(Entity):
     def nothing(self, map):
         del map.ship_assignment[self.id]
         return None
+
+    @staticmethod
+    def rabbit(self, map):
+        foe_ships_by_distance ={}
+        for foe_ship in map.get_foe_ships():
+            foe_ships_by_distance.setdefault(self.calculate_distance_between(foe_ship), []).append(foe_ship)
+
+        if len(foe_ships_by_distance) > 0:
+            for distance in sorted(foe_ships_by_distance.keys()):
+                for foe in foe_ships_by_distance[distance]:
+                    if foe.docking_status == Ship.DockingStatus.UNDOCKED:
+                        if distance < self.DEFENSE_RADIUS:
+                            try:
+                                planet = map.get_planet(map.planets_by_player[map.ship_assignment[self.id]['planet']])
+                                planet_pos = planet.pos
+                            except:
+                                try:
+                                    map.ship_assignment[self.id]['planet'] = map.planets_by_player[foe.owner.id][0]
+                                    planet = map.get_planet(map.planets_by_player[foe.owner.id][0])
+                                    planet_pos = planet.pos
+                                except:
+                                    planet = None
+                                    planet_pos = Circle(0,0,0)
+
+                            ghost_pos  = op_target(self.pos, foe.pos, map.width, map.height)
+                            ghost_pos.radius = 1
+
+                            if planet is not None and self.calculate_distance_between(planet) < 20:
+                                planet_pos = Circle(0,0,0)
+
+                            influence_ghost = 1
+                            influence_planet = 1
+                            p = Position((influence_ghost*ghost_pos.x+influence_planet*planet_pos.x)/(influence_ghost+influence_planet),
+                                         (0-influence_ghost*ghost_pos.y+influence_planet*planet_pos.y)/(influence_ghost+influence_planet),
+                                         ghost_pos.radius)
+
+                            return self.navigate(self.closest_point_to(p), map,
+                                                     speed=constants.MAX_SPEED,
+                                                     kamikaze=False)
+                        else:
+                            foe.pos.radius += self.DEFENSE_RADIUS
+                            return self.navigate(self.closest_point_to(foe), map,
+                                                     speed=constants.MAX_SPEED,
+                                                     assassin=True, closest=True)
+
+        del map.ship_assignment[self.id]
+        return None
+
+
+    @staticmethod
+    def runner(self, map):
+        foe_ships_by_distance ={}
+        for foe_ship in map.get_foe_ships():
+            foe_ships_by_distance.setdefault(self.calculate_distance_between(foe_ship), []).append(foe_ship)
+
+        if len(foe_ships_by_distance) > 0:
+            for distance in sorted(foe_ships_by_distance.keys()):
+                for foe in foe_ships_by_distance[distance]:
+                    if foe.docking_status == Ship.DockingStatus.UNDOCKED:
+                        ghost_pos  = op_target(self.pos, foe.pos, map.width, map.height)
+                        p = Position(ghost_pos.x, ghost_pos.y, ghost_pos.radius)
+                        return self.navigate(self.closest_point_to(p), map,
+                                                 speed=constants.MAX_SPEED,
+                                                 kamikaze=False)
+
+
+        try:
+            player =  map.ship_assignment[self.id]['player']
+            planets = self.planets_by_player[player.id]
+            players = [player]
+        except:
+            if 'player' in  map.ship_assignment[self.id]:
+                del map.ship_assignment[self.id]['player']
+            players = map.all_players()
+
+        for player in players:
+            planets_by_distance = {}
+            if player.id == map.get_me().id:
+                continue
+            try:
+
+                for planet in self.planets_by_player[player.id]:
+                    distance = self.calculate_distance_between(planet) / planet.num_docking_spots
+                    planets_by_distance.setdefault(distance, []).append(planet)
+
+                if len(planets_by_distance) > 0:
+                    for distance in sorted(planets_by_distance.keys()):
+                        planet = planets_by_distance[distance][0]
+                        map.ship_assignment[self.id]['player'] = player.id
+                        return self.navigate(self.closest_point_to(planet), map,
+                                                 speed=constants.MAX_SPEED,
+                                                 )
+            except:
+                pass
+
+        return None
+
+
 
     @staticmethod
     def kamikaze(self, map):
